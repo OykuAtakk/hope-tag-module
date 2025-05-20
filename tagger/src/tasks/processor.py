@@ -166,12 +166,12 @@ def process_batch(batch, thread_count):
         mininterval=0.2
     )
 
-    # ⏱️ Dinamik Timer Görevi
+
     def update_timer():
         while not stop_timer.is_set():
             elapsed = int(time.time() - start_time)
             progress_bar.set_postfix_str(f"⏱️ {elapsed}s")
-            time.sleep(1)  # her saniye güncelle
+            time.sleep(1)
 
     stop_timer = threading.Event()
     timer_thread = threading.Thread(target=update_timer)
@@ -194,9 +194,9 @@ def process_batch(batch, thread_count):
                 progress_bar.update(1)
 
     finally:
-        stop_timer.set()         # zamanlayıcıyı durdur
-        timer_thread.join()      # thread’in kapanmasını bekle
-        progress_bar.close()     # temiz bir kapanış yap
+        stop_timer.set()
+        timer_thread.join()
+        progress_bar.close()
 
     success_count = len(results)
     fail_count = len(batch) - success_count

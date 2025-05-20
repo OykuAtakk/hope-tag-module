@@ -2,13 +2,11 @@ import json
 import random
 import re
 from datetime import datetime
-
 import requests
 from bs4 import BeautifulSoup
-
 from config.settings import USER_AGENTS
 from core.utils import ensure_url_scheme
-from logs.logger import setup_logger  # ✅ DÜZELTİLDİ
+from logs.logger import setup_logger
 
 logger = setup_logger()
 
