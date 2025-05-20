@@ -27,6 +27,9 @@ from extractor.backlink_extractor import extract_external_backlinks
 
 from extractor.site_age import get_site_age
 
+from tqdm import tqdm
+
+
 from logs.logger import setup_logger
 logger = setup_logger()
 
@@ -145,7 +148,33 @@ def process_with_delay(args, use_playwright=False):
     return tag_website(_id, url, use_playwright=use_playwright)
 
 
+from concurrent.futures import as_completed
+
 def process_batch(batch, thread_count):
+    results = []
     with ThreadPoolExecutor(max_workers=thread_count) as executor:
-        results = list(executor.map(lambda args: process_with_delay(args, use_playwright=True), batch))
-    return [r for r in results if r and "error" not in r]
+        futures = {executor.submit(process_with_delay, args, True): args for args in batch}
+
+        with tqdm(total=len(batch),
+                  desc="🚀 İşleniyor",
+                  dynamic_ncols=True,
+                  mininterval=0.1,
+                  bar_format="{l_bar}{bar} | {n_fmt}/{total_fmt} - {elapsed} ⏱️") as pbar:
+
+            for future in as_completed(futures):
+                _id, url = futures[future]
+                try:
+                    result = future.result()
+                    if result is None:
+                        logger.error(f"❌ Hata oluştu → {url}")
+                    else:
+                        results.append(result)
+                except Exception as e:
+                    logger.error(f"🔥 Thread exception: {url} → {e}")
+                pbar.update(1)
+
+    logger.info(f"✅ {len(results)} site başarıyla işlendi.")
+    logger.warning(f"⚠️ {len(batch) - len(results)} site işlenemedi.")
+    return results
+
+

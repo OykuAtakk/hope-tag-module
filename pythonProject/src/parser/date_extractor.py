@@ -40,12 +40,10 @@ def get_last_updated_date(url, response=None, soup=None):
         'Connection': 'keep-alive'
     }
 
-    logger.info(f"{url} için güncelleme tarihi alınmaya çalışılıyor.")
 
     if response is None:
         try:
             response = requests.get(url, timeout=15, headers=headers)
-            logger.debug(f"{url} için HTTP durumu: {response.status_code}")
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
             logger.warning(f"{url} alınamadı: {e}")
@@ -163,8 +161,6 @@ def get_last_updated_date(url, response=None, soup=None):
     # sonuç
     if dates:
         latest = max(dates)
-        logger.info(f"{url} için en güncel tarih bulundu: {latest.strftime('%Y-%m')}")
         return {"year": latest.year, "month": latest.month}
 
-    logger.warning(f"{url} için güncelleme tarihi bulunamadı.")
     return {"year": None, "month": None}

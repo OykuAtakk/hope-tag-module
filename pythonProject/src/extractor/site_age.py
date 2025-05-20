@@ -23,7 +23,6 @@ def get_site_age(url):
 
         if isinstance(creation_date, datetime):
             site_age = datetime.now().year - creation_date.year
-            logger.info(f"{url} için site yaşı: {site_age} yıl.")
             return site_age
         else:
             logger.warning(f"{url} için oluşum tarihi mevcut değil veya beklenen formatta değil.")

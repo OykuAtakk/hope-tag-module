@@ -34,7 +34,6 @@ def get_cookies(url):
 
 def decode_response_content(response):
     try:
-        logger.info("Yanıt içeriği çözülmeye çalışılıyor...")
         return response.content.decode(response.apparent_encoding)
     except Exception as e:
         logger.error(f"İçerik çözülürken hata oluştu: {e}")
