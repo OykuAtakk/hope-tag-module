@@ -8,6 +8,9 @@ from bs4 import BeautifulSoup
 
 from config.settings import USER_AGENTS
 from core.utils import ensure_url_scheme
+from logs.logger import setup_logger  # ✅ DÜZELTİLDİ
+
+logger = setup_logger()
 
 def parse_date(date_str):
     date_formats = [
@@ -15,6 +18,7 @@ def parse_date(date_str):
         "%Y-%m-%dT%H:%M:%S.%fZ",
         "%Y-%m-%d",
         "%d-%m-%Y",
+        "%d.%m.%Y",
         "%m/%d/%Y",
         "%B %d, %Y",
         "%d %B %Y",
@@ -22,7 +26,7 @@ def parse_date(date_str):
     ]
     for fmt in date_formats:
         try:
-            return datetime.strptime(date_str, fmt)
+            return datetime.strptime(date_str.strip(), fmt)
         except ValueError:
             continue
     return None
@@ -36,40 +40,43 @@ def get_last_updated_date(url, response=None, soup=None):
         'Connection': 'keep-alive'
     }
 
+    logger.info(f"{url} için güncelleme tarihi alınmaya çalışılıyor.")
+
     if response is None:
         try:
             response = requests.get(url, timeout=15, headers=headers)
-            print(f"HTTP Response for {url}: {response.status_code}")
+            logger.debug(f"{url} için HTTP durumu: {response.status_code}")
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching last updated date for {url}: {e}")
+            logger.warning(f"{url} alınamadı: {e}")
             return {"year": None, "month": None}
 
     if soup is None:
         try:
             soup = BeautifulSoup(response.content.decode('utf-8', 'ignore'), "html.parser")
         except Exception as e:
-            print(f"Error creating soup for {url}: {e}")
+            logger.warning(f"{url} için BeautifulSoup oluşturulamadı: {e}")
             return {"year": None, "month": None}
 
-    #time etiketlerinden tarih arama
-    time_elements = soup.find_all('time')
-    for time_el in time_elements:
+    dates = []
+
+    # time etiketleri
+    for time_el in soup.find_all('time'):
         if time_el.has_attr('datetime'):
             date = parse_date(time_el['datetime'])
             if date:
-                return {"year": date.year, "month": date.month}
+                dates.append(date)
 
-    #Microdata / RDFa kontrolüyle
+    # itemprop
     for itemprop in ['dateModified', 'datePublished']:
         element = soup.find(attrs={"itemprop": itemprop})
         if element:
             date_str = element.get("content") or element.get_text()
             date = parse_date(date_str)
             if date:
-                return {"year": date.year, "month": date.month}
+                dates.append(date)
 
-    #meta etiketlerinden tarih arama
+    # meta etiketleri
     meta_tags = [
         {'name': 'last-modified'},
         {'property': 'og:updated_time'},
@@ -92,19 +99,15 @@ def get_last_updated_date(url, response=None, soup=None):
         {'name': 'revision_date'},
         {'name': 'son_duzenleme_tarihi'}
     ]
-
-    dates = []
-    for meta_tag in meta_tags:
-        meta_element = soup.find('meta', meta_tag)
-        if meta_element and 'content' in meta_element.attrs:
-            date_str = meta_element['content']
-            date = parse_date(date_str)
+    for tag in meta_tags:
+        meta = soup.find('meta', tag)
+        if meta and 'content' in meta.attrs:
+            date = parse_date(meta['content'])
             if date:
                 dates.append(date)
 
-    #JSON-LD içinde tarih arama
-    json_ld_scripts = soup.find_all("script", type="application/ld+json")
-    for script in json_ld_scripts:
+    # JSON-LD
+    for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string)
             if isinstance(data, dict):
@@ -113,54 +116,55 @@ def get_last_updated_date(url, response=None, soup=None):
                         date = parse_date(data[key])
                         if date:
                             dates.append(date)
-        except json.JSONDecodeError:
+        except Exception as e:
+            logger.debug(f"{url} içinde JSON-LD işlenemedi: {e}")
             continue
 
-    #sayfa metninde arama
-    possible_texts = ["son güncelleme", "last updated", "last modified", "güncellendi"]
-    for text in possible_texts:
-        found_text = soup.find(string=re.compile(text, re.IGNORECASE))
-        if found_text:
-            date_match = re.search(r'\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b', found_text)
-            if date_match:
-                date_str = date_match.group(1)
-                date = parse_date(date_str)
+    # metin içinde regex ile tarih arama
+    patterns = ["son güncelleme", "last updated", "last modified", "güncellendi"]
+    for text in patterns:
+        found = soup.find(string=re.compile(text, re.IGNORECASE))
+        if found:
+            match = re.search(r'\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b', found)
+            if match:
+                date = parse_date(match.group(1))
                 if date:
                     dates.append(date)
 
-    #script etiketleri içinde arama
-    script_tags = soup.find_all('script')
+    # script etiketlerinde tarih arama
     date_pattern = re.compile(r'\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b')
-    for script in script_tags:
+    for script in soup.find_all("script"):
         if script.string:
             for match in date_pattern.findall(script.string):
                 date = parse_date(match)
                 if date:
                     dates.append(date)
 
-    #HTTP Headers'dan Last-Modified kontrolü
+    # HTTP Header
     if 'Last-Modified' in response.headers:
         date = parse_date(response.headers['Last-Modified'])
         if date:
             dates.append(date)
 
-    #sitemap.xml den tarih kontrolü
+    # sitemap.xml
     try:
-        sitemap_url = url.rstrip('/') + "/sitemap.xml"
+        sitemap_url = url.rstrip("/") + "/sitemap.xml"
         sitemap_response = requests.get(sitemap_url, timeout=10)
         if sitemap_response.status_code == 200:
             sitemap_soup = BeautifulSoup(sitemap_response.content, 'xml')
-            lastmod_tag = sitemap_soup.find('lastmod')
-            if lastmod_tag:
-                date = parse_date(lastmod_tag.text.strip())
+            lastmod = sitemap_soup.find('lastmod')
+            if lastmod:
+                date = parse_date(lastmod.text.strip())
                 if date:
                     dates.append(date)
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching sitemap for {url}: {e}")
+    except Exception as e:
+        logger.debug(f"Sitemap alınamadı: {e}")
 
-    # En güncel tarih seçimi
+    # sonuç
     if dates:
-        latest_date = max(dates)
-        return {"year": latest_date.year, "month": latest_date.month}
+        latest = max(dates)
+        logger.info(f"{url} için en güncel tarih bulundu: {latest.strftime('%Y-%m')}")
+        return {"year": latest.year, "month": latest.month}
 
+    logger.warning(f"{url} için güncelleme tarihi bulunamadı.")
     return {"year": None, "month": None}

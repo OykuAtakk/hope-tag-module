@@ -4,7 +4,7 @@ import socket
 from urllib.parse import urlparse
 from requests.cookies import RequestsCookieJar
 from config.settings import USER_AGENTS, COOKIES
-from pythonProject import logger
+from logs import logger
 
 
 def get_headers(url):

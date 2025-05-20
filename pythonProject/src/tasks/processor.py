@@ -24,8 +24,12 @@ from parser.html_parser import has_captcha_or_bot_protection
 
 from extractor.random_content import get_random_content
 from extractor.backlink_extractor import extract_external_backlinks
-from classifier.site_classifier import classify_site
+
 from extractor.site_age import get_site_age
+
+from logs.logger import setup_logger
+logger = setup_logger()
+
 
 # Başarısız veya bulunamayan URL listeleri
 not_found_urls = []
@@ -45,7 +49,7 @@ def tag_website(_id, url, use_playwright=False):
             load_time = round(time.time() - start_time, 2)
             last_updated = get_last_updated_date(url, soup=soup)
         except Exception as e:
-            print(f"Playwright ile içerik çekilirken hata oluştu {url}: {e}")
+            logger.error(f"Playwright ile içerik çekilirken hata oluştu {url}: {e}")
             unprocessable_sites.append({
                 "_id": _id,
                 "url": url,
@@ -68,7 +72,7 @@ def tag_website(_id, url, use_playwright=False):
                 soup = BeautifulSoup(html_content, "html.parser")
 
                 if has_captcha_or_bot_protection(soup, html_content):
-                    print(f"{url} => CAPTCHA detected, switching to Playwright...")
+                    logger.warning(f"{url} => CAPTCHA tespit edildi, Playwright'e geçiliyor...")
                     return tag_website(_id, url, use_playwright=True)
 
                 last_updated = get_last_updated_date(url, response=response, soup=soup)
@@ -78,10 +82,10 @@ def tag_website(_id, url, use_playwright=False):
                     not_found_urls.append(url)
                 if attempt < RETRY_ATTEMPTS - 1:
                     wait_time = random.uniform(3, 6)
-                    print(f"Timeout/error for {url}. Retrying in {wait_time:.2f} seconds...")
+                    logger.warning(f"{url} için hata oluştu, {wait_time:.2f} saniye sonra tekrar deneniyor...")
                     time.sleep(wait_time)
                 else:
-                    print(f"Error fetching {url}: {e}")
+                    logger.error(f"{url} alınırken hata oluştu: {e}")
                     unprocessable_sites.append({
                         "_id": _id,
                         "url": url,
@@ -90,7 +94,7 @@ def tag_website(_id, url, use_playwright=False):
                     })
                     return None
             except Exception as e:
-                print(f"Unexpected error for {url}: {e}")
+                logger.error(f"{url} için beklenmeyen hata: {e}")
                 unprocessable_sites.append({
                     "_id": _id,
                     "url": url,
@@ -112,7 +116,7 @@ def tag_website(_id, url, use_playwright=False):
     strong_texts = [clean_text(tag.get_text(strip=True)) for tag in soup.find_all("strong") if clean_text(tag.get_text(strip=True))]
     underline_texts = [clean_text(tag.get_text(strip=True)) for tag in soup.find_all("u") if clean_text(tag.get_text(strip=True))]
     external_backlinks = extract_external_backlinks(soup, url)
-    site_type = classify_site(random_content)
+
 
     return {
         "_id": _id,
@@ -133,7 +137,6 @@ def tag_website(_id, url, use_playwright=False):
         "strong_texts": strong_texts,
         "underline_texts": underline_texts,
         "external_backlinks": external_backlinks,
-        "site_type": site_type
     }
 
 def process_with_delay(args, use_playwright=False):
