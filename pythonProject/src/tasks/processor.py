@@ -1,0 +1,148 @@
+import multiprocessing
+import time
+import random
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+from config.settings import SLEEP_DELAY, RETRY_ATTEMPTS
+from core.delays import delay_request
+from core.utils import clean_text, ensure_url_scheme
+
+from fetcher.http_client import (
+    get_headers,
+    get_cookies,
+    decode_response_content,
+    has_ssl_certificate
+)
+from fetcher.playwright_client import fetch_and_parse
+
+import cloudscraper
+import requests
+from bs4 import BeautifulSoup
+from parser.date_extractor import parse_date, get_last_updated_date
+from parser.html_parser import has_captcha_or_bot_protection
+
+from extractor.random_content import get_random_content
+from extractor.backlink_extractor import extract_external_backlinks
+from classifier.site_classifier import classify_site
+from extractor.site_age import get_site_age
+
+# Başarısız veya bulunamayan URL listeleri
+not_found_urls = []
+unprocessable_sites = []
+     
+
+def get_dynamic_thread_count():
+    return max(2, multiprocessing.cpu_count() // 2)
+def tag_website(_id, url, use_playwright=False):
+    url = ensure_url_scheme(url)
+    start_time = time.time()
+
+    if use_playwright:
+        try:
+            html_content = fetch_and_parse(url)
+            soup = BeautifulSoup(html_content, "html.parser")
+            load_time = round(time.time() - start_time, 2)
+            last_updated = get_last_updated_date(url, soup=soup)
+        except Exception as e:
+            print(f"Playwright ile içerik çekilirken hata oluştu {url}: {e}")
+            unprocessable_sites.append({
+                "_id": _id,
+                "url": url,
+                "error": str(e),
+                "processed_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+            return None
+    else:
+        headers = get_headers(url)
+        cookie_jar = get_cookies(url)
+        scraper = cloudscraper.create_scraper()
+
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                delay_request()
+                response = scraper.get(url, timeout=15 + min(attempt * 5, 30), cookies=cookie_jar, headers=headers)
+                response.raise_for_status()
+                load_time = round(time.time() - start_time, 2)
+                html_content = decode_response_content(response)
+                soup = BeautifulSoup(html_content, "html.parser")
+
+                if has_captcha_or_bot_protection(soup, html_content):
+                    print(f"{url} => CAPTCHA detected, switching to Playwright...")
+                    return tag_website(_id, url, use_playwright=True)
+
+                last_updated = get_last_updated_date(url, response=response, soup=soup)
+                break
+            except requests.RequestException as e:
+                if '404' in str(e):
+                    not_found_urls.append(url)
+                if attempt < RETRY_ATTEMPTS - 1:
+                    wait_time = random.uniform(3, 6)
+                    print(f"Timeout/error for {url}. Retrying in {wait_time:.2f} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Error fetching {url}: {e}")
+                    unprocessable_sites.append({
+                        "_id": _id,
+                        "url": url,
+                        "error": str(e),
+                        "processed_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    return None
+            except Exception as e:
+                print(f"Unexpected error for {url}: {e}")
+                unprocessable_sites.append({
+                    "_id": _id,
+                    "url": url,
+                    "error": str(e),
+                    "processed_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+                return None
+
+    h1_tags = [clean_text(tag.get_text().strip()) for tag in soup.find_all('h1')]
+    h2_tags = [clean_text(tag.get_text().strip()) for tag in soup.find_all('h2')]
+    h3_tags = [clean_text(tag.get_text().strip()) for tag in soup.find_all('h3')]
+    title_tag = clean_text(soup.title.string.strip()) if soup.title and soup.title.string else ""
+    meta_tag = soup.find("meta", attrs={"name": "description"})
+    meta_description = clean_text(meta_tag["content"].strip()) if meta_tag and meta_tag.get("content") else ""
+    ssl_valid = has_ssl_certificate(url)
+    mobile_compatible = bool(soup.find('meta', attrs={'name': 'viewport'}))
+    domain_age = get_site_age(url)
+    random_content = get_random_content(soup, length=300)
+    strong_texts = [clean_text(tag.get_text(strip=True)) for tag in soup.find_all("strong") if clean_text(tag.get_text(strip=True))]
+    underline_texts = [clean_text(tag.get_text(strip=True)) for tag in soup.find_all("u") if clean_text(tag.get_text(strip=True))]
+    external_backlinks = extract_external_backlinks(soup, url)
+    site_type = classify_site(random_content)
+
+    return {
+        "_id": _id,
+        "url": url,
+        "h1_keyword": h1_tags,
+        "h2_keyword": h2_tags,
+        "h3_keyword": h3_tags,
+        "title_keyword": title_tag,
+        "meta_keyword": meta_description,
+        "load_time": load_time,
+        "last_update_year": last_updated["year"],
+        "last_update_month": last_updated["month"],
+        "mobile_compatibility": mobile_compatible,
+        "ssl_certificate": ssl_valid,
+        "site_age": domain_age,
+        "processed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "random_content": random_content,
+        "strong_texts": strong_texts,
+        "underline_texts": underline_texts,
+        "external_backlinks": external_backlinks,
+        "site_type": site_type
+    }
+
+def process_with_delay(args, use_playwright=False):
+    _id, url = args
+    time.sleep(SLEEP_DELAY)
+    return tag_website(_id, url, use_playwright=use_playwright)
+
+
+def process_batch(batch, thread_count):
+    with ThreadPoolExecutor(max_workers=thread_count) as executor:
+        results = list(executor.map(lambda args: process_with_delay(args, use_playwright=True), batch))
+    return [r for r in results if r and "error" not in r]
