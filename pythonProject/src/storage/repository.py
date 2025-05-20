@@ -18,3 +18,6 @@ class Repository:
 
     def update(self, filter_query: Dict[str, Any], update_query: Dict[str, Any]):
         return self.ctx.update_mongo_record(self.collection, filter_query, update_query)
+
+    def delete(self, filter_query: Dict[str, Any]):
+        return self.ctx.delete_from_mongo(self.collection, filter_query)

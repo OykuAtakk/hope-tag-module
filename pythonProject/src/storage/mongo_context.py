@@ -3,7 +3,6 @@ from config.settings import MONGO_URI, MONGO_DB_NAME
 
 class MongoDbContext:
     def __init__(self, url: str = MONGO_URI, db_name: str = MONGO_DB_NAME):
-        # Bağlantıyı burada bir kez açıp saklıyoruz
         self.client = MongoClient(url)
         self.db = self.client[db_name]
 
@@ -21,3 +20,6 @@ class MongoDbContext:
 
     def update_mongo_record(self, collection_name: str, filter_query: dict, update_query: dict):
         return self.db[collection_name].update_one(filter_query, update_query)
+
+    def delete_from_mongo(self, collection_name: str, filter_query: dict):
+        return self.db[collection_name].delete_one(filter_query)
