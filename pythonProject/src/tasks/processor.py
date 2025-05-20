@@ -148,18 +148,38 @@ def process_with_delay(args, use_playwright=False):
     return tag_website(_id, url, use_playwright=use_playwright)
 
 
-from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+import time
+import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 def process_batch(batch, thread_count):
     results = []
-    with ThreadPoolExecutor(max_workers=thread_count) as executor:
-        futures = {executor.submit(process_with_delay, args, True): args for args in batch}
+    start_time = time.time()
+    progress_bar = tqdm(
+        total=len(batch),
+        desc="🚀 Siteler işleniyor",
+        dynamic_ncols=True,
+        mininterval=0.2
+    )
 
-        with tqdm(total=len(batch),
-                  desc="🚀 İşleniyor",
-                  dynamic_ncols=True,
-                  mininterval=0.1,
-                  bar_format="{l_bar}{bar} | {n_fmt}/{total_fmt} - {elapsed} ⏱️") as pbar:
+    # ⏱️ Dinamik Timer Görevi
+    def update_timer():
+        while not stop_timer.is_set():
+            elapsed = int(time.time() - start_time)
+            progress_bar.set_postfix_str(f"⏱️ {elapsed}s")
+            time.sleep(1)  # her saniye güncelle
+
+    stop_timer = threading.Event()
+    timer_thread = threading.Thread(target=update_timer)
+    timer_thread.start()
+
+    try:
+        with ThreadPoolExecutor(max_workers=thread_count) as executor:
+            futures = {executor.submit(process_with_delay, args, True): args for args in batch}
 
             for future in as_completed(futures):
                 _id, url = futures[future]
@@ -171,10 +191,18 @@ def process_batch(batch, thread_count):
                         results.append(result)
                 except Exception as e:
                     logger.error(f"🔥 Thread exception: {url} → {e}")
-                pbar.update(1)
+                progress_bar.update(1)
 
-    logger.info(f"✅ {len(results)} site başarıyla işlendi.")
-    logger.warning(f"⚠️ {len(batch) - len(results)} site işlenemedi.")
+    finally:
+        stop_timer.set()         # zamanlayıcıyı durdur
+        timer_thread.join()      # thread’in kapanmasını bekle
+        progress_bar.close()     # temiz bir kapanış yap
+
+    success_count = len(results)
+    fail_count = len(batch) - success_count
+
+    logger.info(f"✅ {success_count} site başarıyla işlendi.")
+    if fail_count > 0:
+        logger.warning(f"⚠️ {fail_count} site işlenemedi.")
+
     return results
-
-
